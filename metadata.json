@@ -1,0 +1,5 @@
+{
+  "name": "EstateVista - 實價登錄分析",
+  "description": "A comprehensive real estate transaction dashboard that visualizes data from Google Sheets, providing search capabilities and AI-powered market analysis using Gemini.",
+  "requestFramePermissions": []
+}
