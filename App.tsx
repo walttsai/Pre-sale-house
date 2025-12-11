@@ -216,9 +216,9 @@ const App: React.FC = () => {
              </div>
              <div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-                    EstateVista
+                    新北市預售屋
                 </h1>
-                <p className="text-xs text-slate-500 font-medium tracking-wide">專業實價登錄分析平台</p>
+                <p className="text-xs text-slate-500 font-medium tracking-wide"實價登錄分析平台</p>
              </div>
           </div>
           <div className="flex items-center gap-4">
