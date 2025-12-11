@@ -272,7 +272,7 @@ const App: React.FC = () => {
                 <input
                   type="text"
                   name="project"
-                  placeholder="例如：信義聯勤"
+                  placeholder="例如：國泰曦"
                   value={filters.project}
                   onChange={handleFilterChange}
                   className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 placeholder:text-slate-400 font-medium text-slate-700"
