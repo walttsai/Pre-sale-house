@@ -20,6 +20,7 @@ const ArrowUpIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4
 const ArrowDownIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
 const ChartBarIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>;
 const CashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+const RefreshIcon = ({ className }: { className?: string }) => <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>;
 
 const ITEMS_PER_PAGE = 20;
 
@@ -29,6 +30,10 @@ const App: React.FC = () => {
   const [loadingState, setLoadingState] = useState<LoadingState>(LoadingState.IDLE);
   const [isFallback, setIsFallback] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  
+  // Update state
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isBackgroundUpdating, setIsBackgroundUpdating] = useState(false);
   
   // UI State
   const [hasSearched, setHasSearched] = useState(false);
@@ -50,12 +55,60 @@ const App: React.FC = () => {
     maxPrice: ''
   });
 
+  // Active filters (Snapshot used for current search results)
+  const [activeFilters, setActiveFilters] = useState<FilterState | null>(null);
+
+  // Filter Logic (Optimized)
+  const filterTransactions = (data: Transaction[], criteria: FilterState) => {
+    // Pre-process search criteria to avoid operations inside the loop
+    const searchRegion = criteria.region.toLowerCase().trim();
+    const searchProject = criteria.project.toLowerCase().trim();
+    const hasRegion = searchRegion.length > 0;
+    const hasProject = searchProject.length > 0;
+    
+    const minP = criteria.minPrice !== '' ? Number(criteria.minPrice) * 10000 : 0;
+    const maxP = criteria.maxPrice !== '' ? Number(criteria.maxPrice) * 10000 : Infinity;
+    const hasStartMonth = !!criteria.startMonth;
+    const hasEndMonth = !!criteria.endMonth;
+
+    return data.filter(item => {
+      // Region/Address Search (Combined)
+      if (hasRegion) {
+          const r = (item.region || '').toLowerCase();
+          const a = (item.address || '').toLowerCase();
+          if (!r.includes(searchRegion) && !a.includes(searchRegion)) {
+              return false;
+          }
+      }
+
+      // Project Search
+      if (hasProject) {
+          const p = (item.project || '').toLowerCase();
+          if (!p.includes(searchProject)) {
+              return false;
+          }
+      }
+      
+      // Date Logic
+      if (hasStartMonth || hasEndMonth) {
+          const itemMonth = item.date.substring(0, 7);
+          if (hasStartMonth && itemMonth < criteria.startMonth) return false;
+          if (hasEndMonth && itemMonth > criteria.endMonth) return false;
+      }
+
+      // Price Logic
+      if (item.unitPrice < minP || item.unitPrice > maxP) return false;
+
+      return true;
+    });
+  };
+
   // Load Initial Data (Background fetch)
   const initData = useCallback(async () => {
       setLoadingState(LoadingState.LOADING);
       setErrorMessage('');
       try {
-        const { data: result, isFallback: fallback, error } = await fetchTransactionData();
+        const { data: result, isFallback: fallback, error, lastUpdated: time } = await fetchTransactionData();
         
         if (result.length === 0 && error) {
              throw new Error(error);
@@ -63,6 +116,7 @@ const App: React.FC = () => {
 
         setRawData(result);
         setIsFallback(fallback);
+        setLastUpdated(time);
         setLoadingState(LoadingState.SUCCESS);
       } catch (e: any) {
         console.error(e);
@@ -75,6 +129,38 @@ const App: React.FC = () => {
     initData();
   }, [initData]);
 
+  // Periodic Background Sync (every 60s)
+  useEffect(() => {
+    const intervalId = setInterval(async () => {
+        // Prevent double loading if initial load is still happening
+        if (loadingState === LoadingState.LOADING) return;
+
+        setIsBackgroundUpdating(true);
+        try {
+            // Force refresh = true
+            const { data: result, isFallback: fallback, lastUpdated: time } = await fetchTransactionData(true);
+            
+            if (result.length > 0) {
+                setRawData(result);
+                setIsFallback(fallback);
+                setLastUpdated(time);
+                
+                // If user is currently viewing results, update them with new data based on ACTIVE filters
+                if (activeFilters) {
+                    const newFiltered = filterTransactions(result, activeFilters);
+                    setFilteredData(newFiltered);
+                }
+            }
+        } catch (e) {
+            console.warn("Background sync failed", e);
+        } finally {
+            setIsBackgroundUpdating(false);
+        }
+    }, 60000); // 60 seconds
+
+    return () => clearInterval(intervalId);
+  }, [loadingState, activeFilters]);
+
   // Handle Input Changes
   const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -85,30 +171,11 @@ const App: React.FC = () => {
   const handleSearch = () => {
     if (loadingState !== LoadingState.SUCCESS) return;
 
-    const result = rawData.filter(item => {
-      // Region Search (Checks address or region containing the search string)
-      const searchRegion = filters.region.toLowerCase().trim();
-      const matchRegion = filters.region === '' || 
-        (item.region && item.region.toLowerCase().includes(searchRegion)) ||
-        (item.address && item.address.toLowerCase().includes(searchRegion));
+    // Snapshot the current filters as 'active'
+    setActiveFilters(filters);
 
-      // Project Search
-      const searchProject = filters.project.toLowerCase().trim();
-      const matchProject = filters.project === '' || 
-        (item.project && item.project.toLowerCase().includes(searchProject));
-      
-      // Date Logic: Compare YYYY-MM strings
-      const itemMonth = item.date.substring(0, 7);
-      const matchStart = filters.startMonth ? itemMonth >= filters.startMonth : true;
-      const matchEnd = filters.endMonth ? itemMonth <= filters.endMonth : true;
-
-      const minP = filters.minPrice !== '' ? Number(filters.minPrice) * 10000 : 0;
-      const maxP = filters.maxPrice !== '' ? Number(filters.maxPrice) * 10000 : Infinity;
-      const matchPrice = item.unitPrice >= minP && item.unitPrice <= maxP;
-
-      return matchRegion && matchProject && matchStart && matchEnd && matchPrice;
-    });
-
+    const result = filterTransactions(rawData, filters);
+    
     setFilteredData(result);
     setHasSearched(true);
     setCurrentPage(1); // Reset to first page
@@ -202,6 +269,11 @@ const App: React.FC = () => {
     }
   };
 
+  // Format time helper
+  const formatTime = (date: Date) => {
+      return date.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 font-sans selection:bg-indigo-100 selection:text-indigo-800">
       
@@ -216,9 +288,9 @@ const App: React.FC = () => {
              </div>
              <div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-                    Pre-Sale-Estate
+                    EstateVista
                 </h1>
-                <p className="text-xs text-slate-500 font-medium tracking-wide">新北市預售屋實價登錄分析平台</p>
+                <p className="text-xs text-slate-500 font-medium tracking-wide">實價登錄快速查詢系統</p>
              </div>
           </div>
           <div className="flex items-center gap-4">
@@ -227,9 +299,20 @@ const App: React.FC = () => {
                    <ExclamationIcon /> 範例模式
                 </span>
             )}
-            <div className="hidden md:flex items-center space-x-2 text-sm">
-               <span className={`h-2.5 w-2.5 rounded-full ${loadingState === LoadingState.SUCCESS ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-300'}`}></span>
-               <span className="text-slate-500 font-medium">{loadingState === LoadingState.LOADING ? '同步資料中...' : '系統就緒'}</span>
+            <div className="hidden md:flex flex-col items-end text-right">
+               <div className="flex items-center space-x-2 text-sm">
+                 {isBackgroundUpdating ? (
+                    <RefreshIcon className="w-4 h-4 text-indigo-500 animate-spin" />
+                 ) : (
+                    <span className={`h-2.5 w-2.5 rounded-full ${loadingState === LoadingState.SUCCESS ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-300'}`}></span>
+                 )}
+                 <span className="text-slate-500 font-medium">{loadingState === LoadingState.LOADING ? '資料讀取中...' : (isBackgroundUpdating ? '更新資料中...' : '系統就緒')}</span>
+               </div>
+               {lastUpdated && loadingState === LoadingState.SUCCESS && (
+                  <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    已同步: {formatTime(lastUpdated)}
+                  </span>
+               )}
             </div>
           </div>
         </div>
@@ -249,12 +332,12 @@ const App: React.FC = () => {
             
             {/* Region Search */}
             <div className="relative col-span-1 md:col-span-1 lg:col-span-3">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">所在區域</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">區域 / 地址</label>
               <div className="relative group">
                 <input
                   type="text"
                   name="region"
-                  placeholder="例如：板橋、新莊"
+                  placeholder="例如：板橋、信義路"
                   value={filters.region}
                   onChange={handleFilterChange}
                   className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 placeholder:text-slate-400 font-medium text-slate-700"
@@ -272,7 +355,7 @@ const App: React.FC = () => {
                 <input
                   type="text"
                   name="project"
-                  placeholder="例如：國泰曦"
+                  placeholder="例如：國泰"
                   value={filters.project}
                   onChange={handleFilterChange}
                   className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all duration-200 placeholder:text-slate-400 font-medium text-slate-700"
@@ -384,7 +467,7 @@ const App: React.FC = () => {
                     <SearchIcon />
                 </div>
                 <h3 className="text-xl font-bold text-slate-700 mb-2">準備查詢</h3>
-                <p className="max-w-md text-center text-slate-500">請在上方輸入區域或建案名稱，並點擊「開始查詢」按鈕。</p>
+                <p className="max-w-md text-center text-slate-500">請在上方輸入區域、地址或建案名稱，並點擊「開始查詢」按鈕。</p>
             </div>
         )}
 
@@ -432,7 +515,7 @@ const App: React.FC = () => {
                             <div className="flex items-center gap-1">交易日期 {getSortIcon('date')}</div>
                           </th>
                           <th className="px-6 py-4 font-bold tracking-wider cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('region')}>
-                            <div className="flex items-center gap-1">區域 {getSortIcon('region')}</div>
+                            <div className="flex items-center gap-1">區域/地址 {getSortIcon('region')}</div>
                           </th>
                           <th className="px-6 py-4 font-bold tracking-wider cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('project')}>
                             <div className="flex items-center gap-1">建案名稱 {getSortIcon('project')}</div>
@@ -457,7 +540,8 @@ const App: React.FC = () => {
                             <tr key={row.id} className="hover:bg-indigo-50/50 hover:shadow-sm transition-all duration-200 group border-l-2 border-transparent hover:border-indigo-500">
                               <td className="px-6 py-4 whitespace-nowrap text-slate-600 font-mono text-xs">{row.date}</td>
                               <td className="px-6 py-4 whitespace-nowrap text-slate-700 font-medium">
-                                {row.region || '-'}
+                                <div>{row.region || '-'}</div>
+                                <div className="text-xs text-slate-400 truncate max-w-[120px]">{row.address}</div>
                               </td>
                               <td className="px-6 py-4">
                                 <span className="font-bold text-slate-800 text-sm group-hover:text-indigo-700 transition-colors">{row.project || '—'}</span>

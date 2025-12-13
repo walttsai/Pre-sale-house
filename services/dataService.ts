@@ -15,7 +15,7 @@ const FALLBACK_DATA: Transaction[] = [
 ];
 
 // Cache variable
-let cachedResult: { data: Transaction[], isFallback: boolean } | null = null;
+let cachedResult: { data: Transaction[], isFallback: boolean, lastUpdated: Date } | null = null;
 
 const parseCSVLine = (line: string): string[] => {
   const result = [];
@@ -83,7 +83,7 @@ const calculateAge = (completionDateStr: string, transactionDateStr: string): nu
     return 0;
 };
 
-export const fetchTransactionData = async (forceRefresh = false): Promise<{ data: Transaction[], isFallback: boolean, error?: string }> => {
+export const fetchTransactionData = async (forceRefresh = false): Promise<{ data: Transaction[], isFallback: boolean, error?: string, lastUpdated: Date }> => {
   // Return cached data if available and not forced to refresh
   if (cachedResult && !forceRefresh) {
       console.log("Returning cached data");
@@ -97,7 +97,7 @@ export const fetchTransactionData = async (forceRefresh = false): Promise<{ data
     const contentType = response.headers.get("content-type");
     if (contentType && contentType.includes("text/html")) {
        console.warn("Received HTML instead of CSV. Sheet likely not published to web.");
-       return { data: FALLBACK_DATA, isFallback: true, error: "Sheet not public" };
+       return { data: FALLBACK_DATA, isFallback: true, error: "Sheet not public", lastUpdated: new Date() };
     }
     
     if (!response.ok) {
@@ -107,12 +107,11 @@ export const fetchTransactionData = async (forceRefresh = false): Promise<{ data
     const text = await response.text();
     const lines = text.split('\n').filter(line => line.trim() !== '');
     
-    if (lines.length < 2) return { data: [], isFallback: false };
+    if (lines.length < 2) return { data: [], isFallback: false, lastUpdated: new Date() };
 
     // Header Detection
     const headers = parseCSVLine(lines[0]);
-    console.log("Detected Headers:", headers);
-
+    
     const getIndex = (keywords: string[]) => headers.findIndex(h => keywords.some(k => h.toLowerCase().includes(k.toLowerCase())));
 
     // Expanded keywords for better matching custom sheets
@@ -218,13 +217,14 @@ export const fetchTransactionData = async (forceRefresh = false): Promise<{ data
     
     console.log(`Parsed ${validTransactions.length} valid rows from ${lines.length} lines.`);
     
+    const lastUpdated = new Date();
     // Cache the result
-    cachedResult = { data: validTransactions, isFallback: false };
+    cachedResult = { data: validTransactions, isFallback: false, lastUpdated };
     
     return cachedResult;
 
   } catch (error: any) {
     console.warn("Error fetching data, using fallback.", error);
-    return { data: FALLBACK_DATA, isFallback: true, error: error.message };
+    return { data: FALLBACK_DATA, isFallback: true, error: error.message, lastUpdated: new Date() };
   }
 };

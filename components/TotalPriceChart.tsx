@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Brush } from 'recharts';
 import { Transaction } from '../types';
 
@@ -7,17 +7,25 @@ interface TotalPriceChartProps {
 }
 
 export const TotalPriceChart: React.FC<TotalPriceChartProps> = ({ data }) => {
-  // Sort data by date for better visualization
-  const sortedData = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  // Memoize and downsample data
+  const chartData = useMemo(() => {
+    const sorted = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // Downsampling logic
+    const MAX_POINTS = 500;
+    let processedData = sorted;
 
-  // Format for chart
-  const chartData = sortedData.map(item => ({
-    ...item,
-    // Convert date to timestamp for X-axis
-    dateTimestamp: new Date(item.date).getTime(),
-    // Format Price to Wan (萬) for readability
-    displayPrice: Math.round(item.totalPrice / 10000)
-  }));
+    if (sorted.length > MAX_POINTS) {
+      const step = Math.ceil(sorted.length / MAX_POINTS);
+      processedData = sorted.filter((_, index) => index % step === 0);
+    }
+
+    return processedData.map(item => ({
+      ...item,
+      dateTimestamp: new Date(item.date).getTime(),
+      displayPrice: Math.round(item.totalPrice / 10000)
+    }));
+  }, [data]);
 
   const formatXAxis = (tickItem: number) => {
     const date = new Date(tickItem);
@@ -28,7 +36,14 @@ export const TotalPriceChart: React.FC<TotalPriceChartProps> = ({ data }) => {
     <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100 h-[480px]">
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-lg font-bold text-slate-800">總價分佈趨勢</h3>
-        <span className="text-xs text-slate-400 bg-slate-100 px-3 py-1 rounded-full">可拖曳下方滑桿縮放</span>
+        <div className="flex items-center gap-2">
+            {data.length > 500 && (
+                <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded-md border border-amber-100">
+                    已優化顯示 {chartData.length} 筆
+                </span>
+            )}
+            <span className="text-xs text-slate-400 bg-slate-100 px-3 py-1 rounded-full">可拖曳下方滑桿縮放</span>
+        </div>
       </div>
       
       <ResponsiveContainer width="100%" height="85%">
@@ -61,7 +76,7 @@ export const TotalPriceChart: React.FC<TotalPriceChartProps> = ({ data }) => {
                 if (active && payload && payload.length) {
                   const data = payload[0].payload;
                   return (
-                    <div className="bg-white p-4 border border-slate-100 shadow-xl rounded-xl text-sm min-w-[200px]">
+                    <div className="bg-white p-4 border border-slate-100 shadow-xl rounded-xl text-sm min-w-[200px] z-50">
                       <div className="border-b border-emerald-100 pb-2 mb-2">
                         <p className="font-bold text-slate-800 text-base">{data.project || '無建案名稱'}</p>
                         <p className="text-slate-500 text-xs">{data.address}</p>
@@ -94,11 +109,12 @@ export const TotalPriceChart: React.FC<TotalPriceChartProps> = ({ data }) => {
           <Scatter 
             name="成交案件 (總價)" 
             data={chartData} 
-            fill="#10b981" // Emerald green for Total Price
+            fill="#10b981"
             opacity={0.6}
             stroke="#ffffff"
             strokeWidth={1}
             r={5}
+            isAnimationActive={data.length < 100}
           />
           <Brush 
             dataKey="dateTimestamp" 
